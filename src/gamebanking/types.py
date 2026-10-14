@@ -89,6 +89,8 @@ class Entry(TypedDict):
     side: str
     amount_minor: int
     balance_after: int
+    #: "principal", "fee" or "levy".
+    kind: str
 
 
 class Transaction(TypedDict, total=False):
@@ -122,6 +124,8 @@ class HistoryItem(TypedDict):
     amount_minor: int
     amount_display: str
     balance_after: int
+    #: "principal", "fee" or "levy". A fee or levy line's narration is the fee's name.
+    kind: str
     narration: Optional[str]
     reference: Optional[str]
     counterparty: Optional[Dict[str, str]]
@@ -142,6 +146,8 @@ class Hold(TypedDict):
     account_id: str
     destination_account_id: Optional[str]
     amount_minor: int
+    #: Held on top of the amount for the capture's expected fees.
+    reserved_fee_minor: int
     captured_amount_minor: Optional[int]
     status: str
     reason: str
@@ -194,10 +200,27 @@ class FundingResult(TypedDict):
     balance: Balance
 
 
+class FeeCharge(TypedDict):
+    """One fee or levy charged on a payment."""
+
+    fee_rule_id: str
+    fee_rule_version: int
+    code: str
+    name: str
+    kind: str
+    amount_minor: int
+    credit_account: str
+
+
 class TransferResult(TypedDict, total=False):
     transaction: Transaction
     source_balance: Balance
     destination_balance: Balance
+    #: Fees and levies charged to the sender on top of the amount.
+    fees: List[FeeCharge]
+    fees_total_minor: int
+    #: Amount plus fees.
+    total_debit_minor: int
 
 
 class HoldResult(TypedDict):
@@ -210,6 +233,63 @@ class CaptureResult(TypedDict, total=False):
     transaction: Transaction
     source_balance: Balance
     destination_balance: Balance
+    fees: List[FeeCharge]
+    fees_total_minor: int
+    total_debit_minor: int
+
+
+class FeeRule(TypedDict):
+    """A fee or levy a bank charges. Amounts are minor units; times are game time."""
+
+    id: str
+    bank_id: str
+    code: str
+    name: str
+    #: "transfer", "hold_capture" or "account_maintenance".
+    event: str
+    #: "fee" (credits fee_income) or "levy" (credits levies_payable).
+    kind: str
+    #: "fixed", "percentage" or "combined".
+    model: str
+    fixed_minor: int
+    #: Basis points: 100 = 1%.
+    percentage_bps: int
+    min_fee_minor: Optional[int]
+    max_fee_minor: Optional[int]
+    min_amount_minor: Optional[int]
+    max_amount_minor: Optional[int]
+    payer: str
+    credit_account: str
+    status: str
+    effective_from: str
+    effective_to: Optional[str]
+    version: int
+    #: "in_effect", "scheduled", "ended" or "inactive". Only in_effect rules charge.
+    state: str
+    warnings: List[str]
+    created_at: str
+    updated_at: str
+
+
+class FeeQuote(TypedDict):
+    bank_id: str
+    event: str
+    amount_minor: int
+    fees: List[FeeCharge]
+    fees_total_minor: int
+    total_debit_minor: int
+    game_time: str
+
+
+class BankBooks(TypedDict):
+    """The bank's own ledger accounts, from which its profit and loss derives."""
+
+    bank_id: str
+    currency: str
+    fee_income_minor: int
+    levies_payable_minor: int
+    accounts: List[Dict[str, Any]]
+    as_of: str
 
 
 class AdvanceClockResult(TypedDict):

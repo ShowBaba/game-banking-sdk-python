@@ -11,7 +11,9 @@ import uuid
 from typing import List
 
 from gamebanking import (
+    AuthenticationError,
     ConflictError,
+    FeeChangedError,
     GameBank,
     GameBankManagement,
     InsufficientFundsError,
@@ -47,7 +49,7 @@ class ContractTest(unittest.TestCase):
         key = mgmt.api_keys.issue(game["id"], environment="sandbox", label="contract", scopes=ALL_SCOPES)
         self.assertTrue(key["secret"].startswith("gbe_test_sk_"))
         bank = mgmt.game(game["id"], "sandbox").banks.create(name="Eko Trust Bank", base_currency="NGN")
-        self.assertEqual(len(bank["system_accounts"]), 7)
+        self.assertEqual(len(bank["system_accounts"]), 8)  # incl. levies_payable
         read_only = mgmt.api_keys.issue(game["id"], environment="sandbox", scopes=["account:read"])
 
         seen: List[ResponseInfo] = []
@@ -94,6 +96,7 @@ class ContractTest(unittest.TestCase):
                               destination_account_id=tunde_acct["id"])
         self.assertEqual(held["balance"]["posted_balance"], 7_500_00)
         self.assertEqual(held["balance"]["available_balance"], 4_500_00)
+        self.assertEqual(held["hold"]["reserved_fee_minor"], 0)
         cap = gb.holds.capture(held["hold"]["id"], amount_minor=2_000_00)
         self.assertEqual(cap["hold"]["status"], "captured")
         self.assertEqual(cap["source_balance"]["available_balance"], 5_500_00)
@@ -121,10 +124,53 @@ class ContractTest(unittest.TestCase):
         self.assertEqual(rev["type"], "reversal")
         self.assertEqual(gb.transactions.get(t["transaction"]["id"])["status"], "reversed")
 
+        # Fees: a ₦50 + 1% transfer fee (max ₦500) via the developer credential, a levy via the game key.
+        cfg = mgmt.game(game["id"], "sandbox")
+        fee = cfg.fees.create(bank["id"], code="transfer_fee", name="Transfer fee", event="transfer", model="combined",
+                              fixed_minor=50_00, percentage_bps=100, max_fee_minor=500_00)
+        self.assertEqual(fee["state"], "in_effect")
+        self.assertEqual(fee["credit_account"], "fee_income")
+        levy = gb.fees.create(bank["id"], code="stamp_duty", name="Stamp duty", event="transfer", kind="levy",
+                              model="fixed", fixed_minor=50_00, min_amount_minor=10_000_00)
+        self.assertEqual(levy["credit_account"], "levies_payable")
+        self.assertEqual(len(gb.fees.list(bank["id"])), 2)
+
+        quote = gb.fees.quote(bank_id=bank["id"], amount_minor=1_000_00)
+        self.assertEqual(quote["fees_total_minor"], 60_00)
+        before = gb.accounts.balance(ada_acct["id"])["posted_balance"]
+        pay = dict(source_account_id=ada_acct["id"], destination_account_id=tunde_acct["id"], amount_minor=1_000_00,
+                   max_fee_minor=quote["fees_total_minor"])
+        paid = gb.transfers.create(**pay)
+        self.assertEqual(paid["fees_total_minor"], 60_00)
+        self.assertEqual(paid["total_debit_minor"], 1_060_00)
+        self.assertEqual(paid["source_balance"]["posted_balance"], before - 1_060_00)
+        self.assertEqual(sorted(e["kind"] for e in paid["transaction"]["entries"]), ["fee", "fee", "principal", "principal"])
+        latest = gb.accounts.transactions(ada_acct["id"], limit=2)["data"]
+        self.assertTrue(any(x["kind"] == "fee" and x["narration"] == "Transfer fee" for x in latest))
+
+        cfg.fees.update(bank["id"], fee["id"], fixed_minor=60_00)
+        with self.assertRaises(FeeChangedError) as c:
+            gb.transfers.create(**pay)
+        self.assertIsInstance(c.exception, ConflictError)
+        self.assertEqual(c.exception.code, "fee_changed")
+
+        self.assertEqual(gb.banks.books(bank["id"])["fee_income_minor"], 60_00)
+        gb.transactions.reverse(paid["transaction"]["id"], reason="refund")
+        self.assertEqual(gb.banks.books(bank["id"])["fee_income_minor"], 0)
+        self.assertEqual(cfg.fees.update(bank["id"], fee["id"], status="inactive")["state"], "inactive")
+
         gb.clock.configure(mode="manual")
         self.assertIn("game_day", gb.clock.advance(days=1)["clock"])
         recon = gb.reconcile()
         self.assertTrue(recon["ok"], recon["differences"])
+
+        # Renaming and deleting a game. Deleting revokes its keys at once.
+        self.assertEqual(mgmt.games.update(game["id"], name="PY Game renamed")["name"], "PY Game renamed")
+        mgmt.games.delete(game["id"])
+        with self.assertRaises(NotFoundError):
+            mgmt.games.get(game["id"])
+        with self.assertRaises(AuthenticationError):
+            gb.clock.get()
 
 
 if __name__ == "__main__":

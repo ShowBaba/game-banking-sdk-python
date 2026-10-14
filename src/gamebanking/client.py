@@ -102,13 +102,19 @@ class Transfers(_Resource):
                destination_account_id: Optional[str] = None, destination_account_number: Optional[str] = None,
                destination_bank_code: Optional[str] = None, bank_id: Optional[str] = None,
                currency: Optional[str] = None, reference: Optional[str] = None, narration: Optional[str] = None,
-               metadata: Optional[Dict[str, Any]] = None, idempotency_key: Optional[str] = None) -> t.TransferResult:
-        """Moves money between two customer accounts in the same bank, atomically."""
+               metadata: Optional[Dict[str, Any]] = None, max_fee_minor: Optional[int] = None,
+               idempotency_key: Optional[str] = None) -> t.TransferResult:
+        """Moves money between two customer accounts in the same bank, atomically.
+
+        Fees are charged to the sender on top of the amount. Pass ``max_fee_minor``
+        (e.g. a quote's ``fees_total_minor``) to get ``FeeChangedError`` rather than
+        a higher fee if the schedule changed since the player saw the quote.
+        """
         _amount(amount_minor)
         body = _body(source_account_id=source_account_id, amount_minor=amount_minor,
                      destination_account_id=destination_account_id, destination_account_number=destination_account_number,
                      destination_bank_code=destination_bank_code, bank_id=bank_id, currency=currency,
-                     reference=reference, narration=narration, metadata=metadata)
+                     reference=reference, narration=narration, metadata=metadata, max_fee_minor=max_fee_minor)
         return cast(t.TransferResult, self._t.request("POST", "/v1/transfers", body=body, idempotent=True, idempotency_key=idempotency_key))
 
 
@@ -116,12 +122,14 @@ class Holds(_Resource):
     def place(self, *, account_id: str, amount_minor: int, reason: str, reference: Optional[str] = None,
               destination_account_id: Optional[str] = None, destination_account_number: Optional[str] = None,
               expires_at_game: Optional[str] = None, expires_in_game_seconds: Optional[int] = None,
-              idempotency_key: Optional[str] = None) -> t.HoldResult:
-        """Reserves funds: available balance drops, posted balance does not."""
+              max_fee_minor: Optional[int] = None, idempotency_key: Optional[str] = None) -> t.HoldResult:
+        """Reserves funds: available balance drops, posted balance does not. The hold also
+        reserves the fees its capture is expected to cost (``reserved_fee_minor``)."""
         _amount(amount_minor)
         body = _body(account_id=account_id, amount_minor=amount_minor, reason=reason, reference=reference,
                      destination_account_id=destination_account_id, destination_account_number=destination_account_number,
-                     expires_at_game=expires_at_game, expires_in_game_seconds=expires_in_game_seconds)
+                     expires_at_game=expires_at_game, expires_in_game_seconds=expires_in_game_seconds,
+                     max_fee_minor=max_fee_minor)
         return cast(t.HoldResult, self._t.request("POST", "/v1/holds", body=body, idempotent=True, idempotency_key=idempotency_key))
 
     def get(self, hold_id: str) -> t.Hold:
@@ -130,13 +138,13 @@ class Holds(_Resource):
     def capture(self, hold_id: str, *, amount_minor: Optional[int] = None, destination_account_id: Optional[str] = None,
                 destination_account_number: Optional[str] = None, narration: Optional[str] = None,
                 reference: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None,
-                idempotency_key: Optional[str] = None) -> t.CaptureResult:
-        """Posts all (``amount_minor=None``) or part of a hold as a transfer and releases the rest."""
+                max_fee_minor: Optional[int] = None, idempotency_key: Optional[str] = None) -> t.CaptureResult:
+        """Posts all (``amount_minor=None``) or part of a hold as a transfer, with its fees, and releases the rest."""
         if amount_minor is not None:
             _amount(amount_minor)
         body = _body(amount_minor=amount_minor, destination_account_id=destination_account_id,
                      destination_account_number=destination_account_number, narration=narration,
-                     reference=reference, metadata=metadata)
+                     reference=reference, metadata=metadata, max_fee_minor=max_fee_minor)
         return cast(t.CaptureResult, self._t.request("POST", f"/v1/holds/{_q(hold_id)}/capture", body=body,
                                                      idempotent=True, idempotency_key=idempotency_key))
 
@@ -180,9 +188,59 @@ class Banks(_Resource):
     def limits(self, bank_id: str) -> t.Limits:
         return cast(t.Limits, self._t.request("GET", f"/v1/banks/{_q(bank_id)}/limits"))
 
+    def books(self, bank_id: str) -> t.BankBooks:
+        """The bank's own ledger accounts: fee income earned and levies held."""
+        return cast(t.BankBooks, self._t.request("GET", f"/v1/banks/{_q(bank_id)}/books"))
+
     def set_limits(self, bank_id: str, limits: Dict[str, Optional[Dict[str, Optional[int]]]]) -> t.Limits:
         """Sets caps per scope, e.g. ``{"player_funding": {"daily_max": 500000}}``; ``None`` removes a scope's limits."""
         return cast(t.Limits, self._t.request("PUT", f"/v1/banks/{_q(bank_id)}/limits", body=limits))
+
+
+class Fees(_Resource):
+    """A bank's fees and levies, and fee quotes."""
+
+    def list(self, bank_id: str) -> List[t.FeeRule]:
+        """Active and inactive rules, each with its current ``state``."""
+        return cast(List[t.FeeRule], self._t.request("GET", f"/v1/banks/{_q(bank_id)}/fees")["data"])
+
+    def get(self, bank_id: str, fee_id: str) -> t.FeeRule:
+        return cast(t.FeeRule, self._t.request("GET", f"/v1/banks/{_q(bank_id)}/fees/{_q(fee_id)}"))
+
+    def create(self, bank_id: str, *, code: str, name: str, event: str, model: str, kind: Optional[str] = None,
+               fixed_minor: Optional[int] = None, percentage_bps: Optional[int] = None,
+               min_fee_minor: Optional[int] = None, max_fee_minor: Optional[int] = None,
+               min_amount_minor: Optional[int] = None, max_amount_minor: Optional[int] = None,
+               status: Optional[str] = None, effective_from: Optional[str] = None, effective_to: Optional[str] = None,
+               start_now: Optional[bool] = None) -> t.FeeRule:
+        """Adds a fee or levy. ``event``: transfer, hold_capture or account_maintenance; ``model``: fixed,
+        percentage or combined; ``kind``: fee (default) or levy. Times are game time. Needs bank:write."""
+        body = _body(code=code, name=name, event=event, model=model, kind=kind, fixed_minor=fixed_minor,
+                     percentage_bps=percentage_bps, min_fee_minor=min_fee_minor, max_fee_minor=max_fee_minor,
+                     min_amount_minor=min_amount_minor, max_amount_minor=max_amount_minor, status=status,
+                     effective_from=effective_from, effective_to=effective_to, start_now=start_now)
+        return cast(t.FeeRule, self._t.request("POST", f"/v1/banks/{_q(bank_id)}/fees", body=body))
+
+    def update(self, bank_id: str, fee_id: str, *, name: Optional[str] = None, kind: Optional[str] = None,
+               model: Optional[str] = None, fixed_minor: Optional[int] = None, percentage_bps: Optional[int] = None,
+               min_fee_minor: Optional[int] = None, max_fee_minor: Optional[int] = None,
+               min_amount_minor: Optional[int] = None, max_amount_minor: Optional[int] = None,
+               status: Optional[str] = None, effective_from: Optional[str] = None, effective_to: Optional[str] = None,
+               start_now: Optional[bool] = None, clear: Optional[List[str]] = None) -> t.FeeRule:
+        """Changes, pauses (``status="inactive"``) or resumes a fee; bumps its version. ``clear`` resets
+        fields to "no limit", e.g. ``["max_fee_minor"]``. code and event cannot change."""
+        body = _body(name=name, kind=kind, model=model, fixed_minor=fixed_minor, percentage_bps=percentage_bps,
+                     min_fee_minor=min_fee_minor, max_fee_minor=max_fee_minor, min_amount_minor=min_amount_minor,
+                     max_amount_minor=max_amount_minor, status=status, effective_from=effective_from,
+                     effective_to=effective_to, start_now=start_now, clear=clear)
+        return cast(t.FeeRule, self._t.request("PATCH", f"/v1/banks/{_q(bank_id)}/fees/{_q(fee_id)}", body=body))
+
+    def quote(self, *, bank_id: str, amount_minor: int, event: str = "transfer") -> t.FeeQuote:
+        """What a transfer (or ``event="hold_capture"``) would cost now. Show it to the player, then
+        pass ``fees_total_minor`` as ``max_fee_minor`` on the payment."""
+        _amount(amount_minor)
+        return cast(t.FeeQuote, self._t.request("POST", "/v1/fees/quote",
+                                                body={"bank_id": bank_id, "event": event, "amount_minor": amount_minor}))
 
 
 class Currencies(_Resource):
@@ -241,6 +299,7 @@ class GameBank:
         self.holds = Holds(self._t)
         self.transactions = Transactions(self._t)
         self.banks = Banks(self._t)
+        self.fees = Fees(self._t)
         self.currencies = Currencies(self._t)
         self.clock = GameClock(self._t)
 
@@ -264,8 +323,14 @@ class Games(_Resource):
     def get(self, game_id: str) -> t.Game:
         return cast(t.Game, self._t.request("GET", f"/v1/games/{_q(game_id)}"))
 
-    def update(self, game_id: str, *, status: str) -> t.Game:
-        return cast(t.Game, self._t.request("PATCH", f"/v1/games/{_q(game_id)}", body={"status": status}))
+    def update(self, game_id: str, *, name: Optional[str] = None, slug: Optional[str] = None,
+               status: Optional[str] = None) -> t.Game:
+        """Renames a game, changes its slug, or suspends ("suspended") / reactivates ("active") it."""
+        return cast(t.Game, self._t.request("PATCH", f"/v1/games/{_q(game_id)}", body=_body(name=name, slug=slug, status=status)))
+
+    def delete(self, game_id: str) -> None:
+        """Deletes a game permanently: its API keys are revoked at once. Ledger and audit history are kept."""
+        self._t.request("DELETE", f"/v1/games/{_q(game_id)}")
 
 
 class ApiKeys(_Resource):

@@ -49,6 +49,7 @@ Every failure raises (or returns, in Go) a `GameBankError` with `status`, `code`
 | `PermissionDeniedError` | 403 (missing scope, suspended game, …) |
 | `NotFoundError` | 404 |
 | `ConflictError` | 409 (`idempotency_key_reused`, `email_taken`, `already_reversed`, …) |
+| `FeeChangedError` (a `ConflictError`) | 409 `fee_changed`: the fees now total more than the request's `max_fee_minor`; `details.fees` lists the current charges |
 | `InvalidRequestError` | 400, 413, 415 |
 | `InsufficientFundsError` | 422 `insufficient_funds` |
 | `LimitExceededError` | 422 `limit_exceeded` |
@@ -61,6 +62,16 @@ Branch on `code` for anything finer; it is stable across versions.
 
 ### Money
 Amounts are integers in minor units (`amount_minor`); a currency's `exponent` gives its decimal places. Each SDK has `toMinor("100.50", 2) → 10050` and `formatMinor(10050, 2) → "100.50"` helpers that never use floating point. The TypeScript SDK rejects amounts that are not safe integers.
+
+### Fees and charges
+
+A bank's fee rules (`fees.list/get/create/update`, needing `bank:write` to change) add their own ledger lines to transfers and hold captures, and a monthly maintenance charge. Every SDK supports the full flow:
+
+1. `fees.quote({ bank_id, amount_minor })` returns the exact charges for a payment now.
+2. Show the player the total, then pass the quote's `fees_total_minor` as `max_fee_minor` on `transfers.create` (or `holds.place` / `holds.capture`). If the schedule changed in between and the fees are now higher, the engine refuses with `FeeChangedError` rather than charging more; get a new quote.
+3. Results carry `fees`, `fees_total_minor` and `total_debit_minor`; ledger entries and history lines carry `kind` (`principal`, `fee` or `levy`), and a fee line's narration is the fee's name.
+
+Fee rules report a `state` (`in_effect`, `scheduled`, `ended`, `inactive`) computed from the game clock; `start_now` starts a rule at the current game time. Holds carry `reserved_fee_minor`. `banks.books(bank_id)` returns the bank's fee income and levies held. A reversal undoes the whole transaction and refunds its fees unless the bank turned that off.
 
 ### Pagination
 Account history is cursor-paginated. Each SDK offers a one-page call (`accounts.transactions`) and an iterator that follows `next_cursor` (`accounts.iterateTransactions`).

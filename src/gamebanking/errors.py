@@ -52,6 +52,12 @@ class ConflictError(GameBankError):
     """409: e.g. idempotency_key_reused, already_reversed, email_taken."""
 
 
+class FeeChangedError(ConflictError):
+    """409 fee_changed: the fees now total more than the request's max_fee_minor,
+    e.g. the fee schedule changed after the player saw a quote. ``details["fees"]``
+    lists the current charges; get a new quote."""
+
+
 class InvalidRequestError(GameBankError):
     """400, 413, 415: the request itself is invalid."""
 
@@ -92,7 +98,7 @@ def error_for(status: int, code: str, message: str, **kw: Any) -> GameBankError:
     elif status == 404:
         cls = NotFoundError
     elif status == 409:
-        cls = ConflictError
+        cls = FeeChangedError if code == "fee_changed" else ConflictError
     elif status == 429:
         cls = RateLimitError
     elif status == 422:

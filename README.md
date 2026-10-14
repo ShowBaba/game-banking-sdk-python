@@ -38,6 +38,26 @@ for line in gb.accounts.iter_transactions(account["id"]):
 
 Responses are plain dicts, typed with `TypedDict`s in `gamebanking.types` for editor completion. Holds: `gb.holds.place(...)`, `capture(hold_id, amount_minor=...)`, `release(hold_id)`. Reversals: `gb.transactions.reverse(txn_id, reason=...)`. Clock: `gb.clock.get()`, `configure(...)`, `advance(...)`.
 
+## Fees and charges
+
+```python
+from gamebanking import FeeChangedError
+
+# Show the player what the transfer costs, then cap the fee at what they saw.
+quote = gb.fees.quote(bank_id=BANK_ID, amount_minor=2_000_00)
+try:
+    r = gb.transfers.create(source_account_id=account["id"], destination_account_number="5915945174",
+                            amount_minor=2_000_00, max_fee_minor=quote["fees_total_minor"])
+    print(r["fees"], r["total_debit_minor"])  # each fee is its own ledger and statement line
+except FeeChangedError:
+    ...  # the schedule changed: quote again
+
+# Configure fees (bank:write): ₦50 + 1%, capped at ₦500, on transfers of ₦1,000 or more.
+gb.fees.create(BANK_ID, code="transfer_fee", name="Transfer fee", event="transfer", model="combined",
+               fixed_minor=50_00, percentage_bps=100, max_fee_minor=500_00, min_amount_minor=1_000_00)
+books = gb.banks.books(BANK_ID)  # fee_income_minor, levies_payable_minor
+```
+
 ## Setup and CI
 
 ```python
@@ -49,6 +69,8 @@ key = mgmt.api_keys.issue(game["id"], environment="sandbox", scopes=["account:re
 print(key["secret"])  # shown once
 mgmt.game(game["id"], "sandbox").banks.create(name="Eko Trust Bank", base_currency="NGN")
 ```
+
+`mgmt.games.update(id, name=..., slug=..., status=...)` renames or suspends a game; `mgmt.games.delete(id)` deletes it and revokes its keys.
 
 ## Behaviour
 

@@ -7,6 +7,7 @@ from unittest import mock
 from gamebanking import (
     APIConnectionError,
     ConflictError,
+    FeeChangedError,
     GameBank,
     GameBankError,
     InsufficientFundsError,
@@ -130,9 +131,15 @@ class ErrorTest(unittest.TestCase):
         self.assertEqual(c.exception.status, 422)
         self.assertEqual(c.exception.details["available_balance"], 5)
         self.assertEqual(c.exception.request_id, "req_1")
-        with self.assertRaises(ConflictError):
+        with self.assertRaises(ConflictError) as c:
             client(FakeSender([err(409, "idempotency_key_reused")])).transfers.create(
                 source_account_id="a", destination_account_id="b", amount_minor=9)
+        self.assertNotIsInstance(c.exception, FeeChangedError)
+        s = FakeSender([err(409, "fee_changed", fees_total_minor=70, max_fee_minor=60)])
+        with self.assertRaises(FeeChangedError) as c:
+            client(s).transfers.create(source_account_id="a", destination_account_id="b", amount_minor=9, max_fee_minor=60)
+        self.assertEqual(c.exception.details["fees_total_minor"], 70)
+        self.assertIn(b'"max_fee_minor":60', s.calls[0]["body"])
 
     def test_connection_error_after_retries(self) -> None:
         s = FakeSender([ConnectionRefusedError(), ConnectionRefusedError()])
