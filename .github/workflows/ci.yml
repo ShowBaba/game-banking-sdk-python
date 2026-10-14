@@ -1,0 +1,39 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m unittest discover -s tests -v
+        env:
+          PYTHONPATH: src
+      - name: Build the wheel
+        run: python -m pip wheel . --no-deps -w dist
+
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Start the engine
+        run: |
+          docker compose -f ci/docker-compose.yml up -d
+          ./ci/wait-for-engine.sh
+      - run: python -m unittest discover -s tests -v
+        env:
+          PYTHONPATH: src
+          GBE_BASE_URL: http://localhost:8080

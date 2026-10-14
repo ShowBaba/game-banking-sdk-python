@@ -1,0 +1,75 @@
+# SDK contract
+
+The behaviour every Game Banking Engine SDK implements. The canonical copy lives in the engine repository (`docs/sdk-contract.md`); each SDK repository carries a copy as `CONTRACT.md`. Change the engine's copy first, then update the SDKs.
+
+| SDK | Repository | Package (placeholder name) |
+| --- | --- | --- |
+| TypeScript / JavaScript | [game-banking-sdk-typescript](https://github.com/ShowBaba/game-banking-sdk-typescript) | `@gamebanking/sdk` |
+| Python | [game-banking-sdk-python](https://github.com/ShowBaba/game-banking-sdk-python) | `gamebanking` |
+| C# / .NET | [game-banking-sdk-dotnet](https://github.com/ShowBaba/game-banking-sdk-dotnet) | `GameBanking` |
+| Go | [game-banking-sdk-go](https://github.com/ShowBaba/game-banking-sdk-go) | `github.com/ShowBaba/game-banking-sdk-go` |
+
+**The SDKs are for game servers.** A game API key can move money, so it must never ship in a game client or a web page. The SDKs never authenticate players: your server verifies its own player, then calls the engine for them.
+
+## Two clients
+
+| Client | Credential | Use it for |
+| --- | --- | --- |
+| `GameBank` | Game API key (`gbe_test_sk_…` sandbox, `gbe_live_sk_…` production) | Everything your game server does at runtime: players, accounts, funding, transfers, holds, history, name enquiry, the clock, bank configuration. |
+| `GameBankManagement` | Developer credential (`gbe_dev_…`) or a sign-in session token | Setup and CI: games, API keys, developer credentials, audit logs. `management.game(gameId, environment)` returns a `GameBank` that configures that game's banks, currencies, limits and clock with your developer credential. |
+
+## Behaviour every SDK implements
+
+This is the contract. Each SDK's tests check it.
+
+### Configuration
+`apiKey` (or the `GBE_API_KEY` environment variable), `baseUrl` (or `GBE_BASE_URL`; your engine's address, e.g. `https://game-banking-engine.onrender.com`), `timeout` (30 s) and `maxRetries` (2). The environment is read from the key prefix and exposed as `environment`; it is never sent, because the engine derives it from the key.
+
+### Idempotency
+Every money-moving call (`funding.create`, `transfers.create`, `holds.place`, `holds.capture`, `holds.release`, `transactions.reverse`) sends an `Idempotency-Key`.
+
+* Pass your own key when you have a stable ID for the operation (an order ID, a payroll run ID). Retrying with the same key never moves money twice.
+* If you don't pass one, the SDK generates a random key **once per call** and reuses it on its own retries. That protects against network failures inside one call, but not against your code calling twice; for that, pass your own key.
+
+### Retries
+Up to `maxRetries` extra attempts, with exponential backoff (0.5 s, 1 s, 2 s … capped at 8 s, with jitter). `Retry-After` is honoured, up to 60 s.
+
+| Failure | Retried when |
+| --- | --- |
+| `429 rate_limited` | Always (the request was not processed). |
+| Network error or timeout, `500`, `502`, `503`, `504`, `409 request_in_progress` | Only if retrying cannot duplicate an effect: `GET` and `PUT` requests, requests that carry an `Idempotency-Key`, and `players.upsert`. A plain `POST` such as `accounts.open` is never retried after it may have reached the server. |
+| Any other `4xx` | Never. |
+
+### Errors
+Every failure raises (or returns, in Go) a `GameBankError` with `status`, `code` (the engine's stable error code), `message`, `details`, `requestId` (the engine's correlation ID) and `retryAfter`. Subtypes let you catch categories:
+
+| Type | When |
+| --- | --- |
+| `AuthenticationError` | 401 |
+| `PermissionDeniedError` | 403 (missing scope, suspended game, …) |
+| `NotFoundError` | 404 |
+| `ConflictError` | 409 (`idempotency_key_reused`, `email_taken`, `already_reversed`, …) |
+| `InvalidRequestError` | 400, 413, 415 |
+| `InsufficientFundsError` | 422 `insufficient_funds` |
+| `LimitExceededError` | 422 `limit_exceeded` |
+| `UnprocessableError` | Any other 422 business rule (`account_frozen`, `hold_not_active`, …) |
+| `RateLimitError` | 429 |
+| `ServerError` | 5xx |
+| `ConnectionError` | No response: network failure or timeout (`status` 0) |
+
+Branch on `code` for anything finer; it is stable across versions.
+
+### Money
+Amounts are integers in minor units (`amount_minor`); a currency's `exponent` gives its decimal places. Each SDK has `toMinor("100.50", 2) → 10050` and `formatMinor(10050, 2) → "100.50"` helpers that never use floating point. The TypeScript SDK rejects amounts that are not safe integers.
+
+### Pagination
+Account history is cursor-paginated. Each SDK offers a one-page call (`accounts.transactions`) and an iterator that follows `next_cursor` (`accounts.iterateTransactions`).
+
+### Observability
+Errors carry `requestId`. An optional response hook receives the status, `X-Request-Id` and whether the engine replayed an idempotent response (`Idempotent-Replayed`). The SDKs never log credentials.
+
+## Contract tests
+
+Every SDK has a contract test that runs the PRD §16.2 journey against a real engine: sign up, create a game and keys, create a bank, fund, name enquiry, transfer, idempotent replay, hold and capture, history, reversal, and a transfer whose first response is lost (it must post exactly once). It runs when `GBE_BASE_URL` is set and is skipped otherwise.
+
+Each SDK repository has `ci/docker-compose.yml`, which starts PostgreSQL and the engine's published Docker image (`ghcr.io/showbaba/game-banking-engine`, override with `GBE_ENGINE_IMAGE`) on port 8080. Its CI runs the contract test against that, so an engine release that breaks an SDK fails the SDK's build.
