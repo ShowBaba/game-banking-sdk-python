@@ -5,7 +5,7 @@ The behaviour every Game Banking Engine SDK implements. The canonical copy lives
 | SDK | Repository | Package (placeholder name) |
 | --- | --- | --- |
 | TypeScript / JavaScript | [game-banking-sdk-typescript](https://github.com/ShowBaba/game-banking-sdk-typescript) | `@gamebanking/sdk` |
-| Python | [game-banking-sdk-python](https://github.com/ShowBaba/game-banking-sdk-python) | `gamebanking` |
+| Python | [game-banking-sdk-python](https://github.com/ShowBaba/game-banking-sdk-python) | `game-banking-sdk` |
 | C# / .NET | [game-banking-sdk-dotnet](https://github.com/ShowBaba/game-banking-sdk-dotnet) | `GameBanking` |
 | Go | [game-banking-sdk-go](https://github.com/ShowBaba/game-banking-sdk-go) | `github.com/ShowBaba/game-banking-sdk-go` |
 | Rust | [game-banking-sdk-rust](https://github.com/ShowBaba/game-banking-sdk-rust) | `gamebanking` (crate) |

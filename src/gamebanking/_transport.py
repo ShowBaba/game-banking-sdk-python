@@ -16,7 +16,7 @@ from typing import Any, Callable, Dict, Mapping, NamedTuple, Optional
 
 from .errors import GameBankError, error_for
 
-VERSION = "0.5.0"
+VERSION = "0.5.3"
 _RETRY_STATUSES = {500, 502, 503, 504}
 
 

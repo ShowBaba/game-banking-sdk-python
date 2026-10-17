@@ -4,6 +4,18 @@
 
 - **Card payments charge at once by default.** `card_authorizations.authorize` now captures an approved payment in the same call (the engine's new default); the result then also carries `transaction`, `merchant_balance` and `total_debit_minor`. Pass `capture=False` to hold the payment for a later `capture` or `release` as before.
 
+## 0.5.3
+
+- README and PyPI metadata use **game-banking-sdk** as the package name (not `gamebanking`).
+
+## 0.5.2
+
+- README: PyPI vs import names, correct install pin for this release.
+
+## 0.5.1
+
+- Documentation: PyPI install is `game-banking-sdk` (import remains `gamebanking`).
+
 ## 0.5.0
 
 - **Savings products.** `deposit_products` (per bank) creates, lists, gets, updates and quotes savings and fixed-deposit products. Savings products set tiered rates (whole-balance or banded), day count, accrual basis, monthly or quarterly payout, withholding tax, minimum and maximum balances, and a monthly withdrawal allowance whose excess is blocked, forfeits interest or is charged a fee. Fixed-deposit products set terms, minimum deposit, early-break forfeit and penalty, and the default maturity instruction.

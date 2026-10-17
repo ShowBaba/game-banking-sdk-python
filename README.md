@@ -1,20 +1,20 @@
-# gamebanking (Python)
+# game-banking-sdk
 
-Server-side SDK for the Game Banking Engine. Python 3.9+, standard library only.
+Python distribution for the Game Banking Engine. Python 3.9+, standard library only.
 
 > Game API keys move money. Use this SDK on your game servers only.
 
 ## Install
 
 ```bash
-pip install gamebanking
+pip install game-banking-sdk==0.5.3
 ```
 
 ## Quick start
 
 ```python
 import os
-from gamebanking import GameBank, InsufficientFundsError
+from gamebanking import GameBank, InsufficientFundsError  # module inside game-banking-sdk
 
 gb = GameBank(os.environ["GBE_API_KEY"], "https://your-engine.example.com")
 
