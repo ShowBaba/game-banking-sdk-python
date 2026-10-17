@@ -58,6 +58,11 @@ class FeeChangedError(ConflictError):
     lists the current charges; get a new quote."""
 
 
+class PenaltyChangedError(ConflictError):
+    """409 penalty_changed: breaking a fixed deposit would cost more than the request's
+    max_penalty_minor. ``details["quote"]`` has the current figures."""
+
+
 class InvalidRequestError(GameBankError):
     """400, 413, 415: the request itself is invalid."""
 
@@ -98,7 +103,7 @@ def error_for(status: int, code: str, message: str, **kw: Any) -> GameBankError:
     elif status == 404:
         cls = NotFoundError
     elif status == 409:
-        cls = FeeChangedError if code == "fee_changed" else ConflictError
+        cls = {"fee_changed": FeeChangedError, "penalty_changed": PenaltyChangedError}.get(code, ConflictError)
     elif status == 429:
         cls = RateLimitError
     elif status == 422:

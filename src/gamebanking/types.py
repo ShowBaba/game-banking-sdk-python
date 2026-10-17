@@ -25,6 +25,12 @@ class Account(TypedDict):
     bank_code: str
     owner_type: str
     player_id: Optional[str]
+    #: Set on merchant accounts.
+    merchant_id: Optional[str]
+    #: The deposit product of a savings or fixed-deposit account.
+    product_id: Optional[str]
+    #: Receives the account's interest; None pays the account itself.
+    interest_account_id: Optional[str]
     system_role: Optional[str]
     account_type: str
     account_number: str
@@ -288,6 +294,10 @@ class BankBooks(TypedDict):
     currency: str
     fee_income_minor: int
     levies_payable_minor: int
+    #: Interest paid to savers (negative), earned but unpaid, and money in fixed deposits.
+    interest_expense_minor: int
+    accrued_interest_minor: int
+    fixed_deposits_minor: int
     accounts: List[Dict[str, Any]]
     as_of: str
 
@@ -357,3 +367,364 @@ class AuditLog(TypedDict):
     correlation_id: Optional[str]
     metadata: Dict[str, Any]
     created_at: str
+
+
+# ---- Webhooks -------------------------------------------------------------------
+
+class WebhookEndpoint(TypedDict, total=False):
+    id: str
+    url: str
+    description: Optional[str]
+    #: ["*"] means every type.
+    event_types: List[str]
+    #: "active" or "disabled". The engine disables an endpoint after three days of failed deliveries.
+    status: str
+    disabled_reason: Optional[str]
+    secret_prefix: str
+    #: Present only when the endpoint is created or its secret rotated.
+    secret: str
+    #: Until then deliveries are also signed with the previous secret.
+    previous_secret_expires_at: Optional[str]
+    failing_since: Optional[str]
+    last_success_at: Optional[str]
+    last_failure_at: Optional[str]
+    created_at: str
+    updated_at: str
+
+
+class AlertCharge(TypedDict):
+    #: "fee" or "levy": charged on a debit, refunded on a credit.
+    kind: str
+    name: str
+    fee_rule_id: Optional[str]
+    amount_minor: int
+
+
+class AlertBalance(TypedDict):
+    posted_minor: int
+    available_minor: int
+
+
+class AlertCounterparty(TypedDict):
+    #: "customer" or "bank". Customer account numbers are masked to the last four digits.
+    type: str
+    account_name: str
+    account_number: str
+    bank_code: str
+
+
+class AccountAlert(TypedDict):
+    """The data of an account.debited or account.credited event."""
+
+    account_id: str
+    account_number: str
+    account_name: str
+    player_id: Optional[str]
+    bank_id: str
+    bank_code: str
+    transaction_id: str
+    session_id: str
+    transaction_type: str
+    related_transaction_id: Optional[str]
+    #: The principal (0 for a fee-only transaction).
+    amount_minor: int
+    charges: List[AlertCharge]
+    #: Principal plus charges: what left (or reached) the account.
+    total_minor: int
+    total_display: str
+    currency: CurrencyBrief
+    balance_after: AlertBalance
+    narration: Optional[str]
+    reference: Optional[str]
+    counterparty: Optional[AlertCounterparty]
+    game_time: str
+    #: Increases with every ledger entry: keep the alert with the highest sequence for the latest balance.
+    sequence: int
+
+
+class WebhookEvent(TypedDict):
+    """The body of a webhook delivery, and an item of the events feed. Deduplicate on ``id``."""
+
+    id: str
+    #: account.debited, account.credited or webhook.test
+    type: str
+    created_at: str
+    game_time: Optional[str]
+    game_id: str
+    environment: str
+    #: An AccountAlert for account.* events.
+    data: Dict[str, Any]
+
+
+class WebhookEventPage(TypedDict):
+    data: List[WebhookEvent]
+    next_cursor: Optional[str]
+    has_more: bool
+
+
+class WebhookDelivery(TypedDict):
+    id: str
+    event_id: str
+    event_type: str
+    endpoint_id: str
+    endpoint_url: str
+    #: pending, delivering, delivered or failed
+    state: str
+    attempts: int
+    next_attempt_at: Optional[str]
+    last_attempt_at: Optional[str]
+    #: The endpoint's HTTP status on the last attempt.
+    last_status: Optional[int]
+    last_error: Optional[str]
+    last_response_ms: Optional[int]
+    delivered_at: Optional[str]
+    created_at: str
+
+
+# ---- Merchants and cards ---------------------------------------------------------
+
+class Merchant(TypedDict):
+    id: str
+    external_merchant_id: str
+    name: str
+    category: str
+    owner_player_id: Optional[str]
+    #: "active" or "suspended" (card payments declined).
+    status: str
+    metadata: Dict[str, Any]
+    created_at: str
+    updated_at: str
+
+
+class CardProgram(TypedDict):
+    id: str
+    bank_id: str
+    name: str
+    bin: str
+    validity_months: int
+    #: How long an authorisation holds funds, in game seconds.
+    auth_expiry_seconds: int
+    per_txn_limit_minor: Optional[int]
+    daily_limit_minor: Optional[int]
+    status: str
+    created_at: str
+    updated_at: str
+
+
+class Card(TypedDict):
+    id: str
+    bank_id: str
+    account_id: str
+    player_id: str
+    program_id: str
+    masked_number: str
+    last4: str
+    expiry_month: int
+    #: Valid through the end of expiry_month of game time.
+    expiry_year: int
+    name_on_card: str
+    #: active, blocked, lost, stolen, expired or closed
+    status: str
+    status_reason: Optional[str]
+    per_txn_limit_minor: Optional[int]
+    daily_limit_minor: Optional[int]
+    effective_per_txn_limit_minor: Optional[int]
+    effective_daily_limit_minor: Optional[int]
+    metadata: Dict[str, Any]
+    status_changed_at: str
+    created_at: str
+    updated_at: str
+
+
+class IssueCardResult(TypedDict):
+    """``card_number`` and ``cvv`` are shown only here."""
+
+    card: Card
+    card_number: str
+    cvv: str
+    fees: List[FeeCharge]
+    fees_total_minor: int
+    balance: Balance
+
+
+class CardRefund(TypedDict):
+    id: str
+    transaction_id: str
+    amount_minor: int
+    reason: Optional[str]
+    game_time: str
+    created_at: str
+
+
+class CardAuthorization(TypedDict):
+    id: str
+    card_id: str
+    card_last4: str
+    bank_id: str
+    account_id: str
+    #: {"id", "name", "category"}
+    merchant: Dict[str, str]
+    merchant_account_id: str
+    #: approved, declined, captured, released, expired or refunded
+    status: str
+    decline_code: Optional[str]
+    decline_message: Optional[str]
+    amount_minor: int
+    captured_minor: int
+    refunded_minor: int
+    currency: CurrencyBrief
+    hold_id: Optional[str]
+    reserved_fee_minor: int
+    expires_at_game: Optional[str]
+    capture_transaction_id: Optional[str]
+    reference: Optional[str]
+    description: Optional[str]
+    refunds: List[CardRefund]
+    game_time: str
+    created_at: str
+    updated_at: str
+    closed_at: Optional[str]
+
+
+class _AuthorizeCardResult(TypedDict):
+    authorization: CardAuthorization
+    fees: List[FeeCharge]
+    fees_total_minor: int
+    balance: Balance  # the cardholder's account after the call
+
+
+class AuthorizeCardResult(_AuthorizeCardResult, total=False):
+    """A decline is a result: check ``authorization["status"]`` and ``decline_code``.
+    An approved payment is captured at once (unless ``capture=False``) and the result
+    then also carries ``transaction``, ``merchant_balance`` and ``total_debit_minor``."""
+
+    transaction: Transaction
+    merchant_balance: Balance
+    total_debit_minor: int
+
+
+class CaptureCardResult(TypedDict):
+    authorization: CardAuthorization
+    transaction: Transaction
+    card_balance: Balance
+    merchant_balance: Balance
+    fees: List[FeeCharge]
+    fees_total_minor: int
+    total_debit_minor: int
+
+
+class RefundCardResult(TypedDict):
+    refund: CardRefund
+    authorization: CardAuthorization
+    transaction: Transaction
+    card_balance: Balance
+    merchant_balance: Balance
+
+
+#: Why a card payment was declined (``authorization["decline_code"]``).
+DECLINE_CODES = (
+    "invalid_expiry", "invalid_cvv", "card_blocked", "card_lost", "card_stolen", "card_expired", "card_closed",
+    "account_frozen", "account_closed", "merchant_inactive", "exceeds_transaction_limit", "exceeds_daily_limit",
+    "insufficient_funds",
+)
+
+
+# ---- Savings and fixed deposits ---------------------------------------------------
+
+class DepositProduct(TypedDict, total=False):
+    id: str
+    bank_id: str
+    code: str
+    name: str
+    #: "savings" or "fixed_deposit"
+    kind: str
+    #: Savings: [{"from_minor": 0, "rate_bps": 300}, …] annual rates by balance.
+    rate_tiers: List[Dict[str, int]]
+    #: "whole_balance" or "banded"
+    tier_method: str
+    #: Fixed deposits: [{"days": 90, "rate_bps": 800}, …]
+    terms: List[Dict[str, int]]
+    day_count: str
+    accrual_basis: str
+    payout_frequency: str
+    withholding_tax_bps: int
+    min_opening_minor: int
+    min_balance_minor: int
+    max_balance_minor: Optional[int]
+    withdrawals_per_month: Optional[int]
+    #: "block", "forfeit_interest" or "fee"
+    excess_withdrawal_action: str
+    early_forfeit_bps: int
+    early_penalty_fixed_minor: int
+    early_penalty_bps: int
+    default_maturity_instruction: str
+    status: str
+    version: int
+    created_at: str
+    updated_at: str
+
+
+class DepositQuote(TypedDict):
+    product_id: str
+    amount_minor: int
+    days: int
+    rate_bps: int
+    gross_interest_minor: int
+    tax_minor: int
+    net_interest_minor: int
+    maturity_amount_minor: int
+
+
+class AccountInterest(TypedDict):
+    account_id: str
+    product_id: str
+    product_name: str
+    payout_frequency: str
+    #: The rate the current balance earns (a fixed deposit's locked rate).
+    rate_bps: int
+    accrued_interest_minor: int
+    accrued_through: str
+    next_payout_day: str
+    forfeit_month: Optional[str]
+    withdrawals_this_month: int
+    withdrawals_per_month: Optional[int]
+    payouts: List[Dict[str, Any]]
+
+
+class FixedDeposit(TypedDict):
+    id: str
+    bank_id: str
+    account_id: str
+    account_number: str
+    player_id: str
+    product_id: str
+    product_name: str
+    source_account_id: str
+    payout_account_id: str
+    principal_minor: int
+    rate_bps: int
+    term_days: int
+    start_day: str
+    maturity_day: str
+    #: "payout", "rollover_principal" or "rollover_all"
+    maturity_instruction: str
+    #: "active", "matured" or "broken"
+    status: str
+    terms_completed: int
+    interest_paid_minor: int
+    accrued_interest_minor: int
+    balance_minor: int
+    created_at: str
+    closed_at: Optional[str]
+
+
+class BreakQuote(TypedDict):
+    fixed_deposit_id: str
+    principal_minor: int
+    accrued_interest_minor: int
+    forfeited_interest_minor: int
+    interest_paid_minor: int
+    tax_minor: int
+    penalty_minor: int
+    payout_minor: int
+    payout_account_id: str

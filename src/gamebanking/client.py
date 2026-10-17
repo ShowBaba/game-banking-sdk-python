@@ -44,19 +44,23 @@ class Players(_Resource):
 
 
 class Accounts(_Resource):
-    def open(self, *, bank_id: str, player_id: str, account_type: Optional[str] = None,
-             account_name: Optional[str] = None, currency: Optional[str] = None,
+    def open(self, *, bank_id: str, player_id: Optional[str] = None, merchant_id: Optional[str] = None,
+             account_type: Optional[str] = None, account_name: Optional[str] = None, currency: Optional[str] = None,
+             product_id: Optional[str] = None, interest_account_id: Optional[str] = None,
              metadata: Optional[Dict[str, Any]] = None) -> t.Account:
-        body = _body(bank_id=bank_id, player_id=player_id, account_type=account_type,
-                     account_name=account_name, currency=currency, metadata=metadata)
+        """Opens a player account (``player_id``) or a merchant account (``merchant_id``), which receives card
+        payments. A ``product_id`` makes it a savings account that earns interest under that product."""
+        body = _body(bank_id=bank_id, player_id=player_id, merchant_id=merchant_id, account_type=account_type,
+                     account_name=account_name, currency=currency, product_id=product_id,
+                     interest_account_id=interest_account_id, metadata=metadata)
         return cast(t.Account, self._t.request("POST", "/v1/accounts", body=body))
 
     def get(self, account_id: str) -> t.Account:
         return cast(t.Account, self._t.request("GET", f"/v1/accounts/{_q(account_id)}"))
 
-    def list(self, *, bank_id: Optional[str] = None, player_id: Optional[str] = None,
+    def list(self, *, bank_id: Optional[str] = None, player_id: Optional[str] = None, merchant_id: Optional[str] = None,
              include_system: bool = False, limit: Optional[int] = None) -> List[t.Account]:
-        q = {"bank_id": bank_id, "player_id": player_id, "include_system": include_system or None, "limit": limit}
+        q = {"bank_id": bank_id, "player_id": player_id, "merchant_id": merchant_id, "include_system": include_system or None, "limit": limit}
         return cast(List[t.Account], self._t.request("GET", "/v1/accounts", query=q)["data"])
 
     def update_status(self, account_id: str, *, status: str, reason: Optional[str] = None) -> t.Account:
@@ -80,6 +84,10 @@ class Accounts(_Resource):
             cursor = page.get("next_cursor")
             if not cursor:
                 return
+
+    def interest(self, account_id: str) -> t.AccountInterest:
+        """A savings or fixed-deposit account's rate, accrued interest, next payout and recent payouts."""
+        return cast(t.AccountInterest, self._t.request("GET", f"/v1/accounts/{_q(account_id)}/interest"))
 
     def holds(self, account_id: str, *, status: Optional[str] = None) -> List[t.Hold]:
         return cast(List[t.Hold], self._t.request("GET", f"/v1/accounts/{_q(account_id)}/holds", query={"status": status})["data"])
@@ -270,6 +278,287 @@ class GameClock(_Resource):
         return cast(t.AdvanceClockResult, self._t.request("POST", "/v1/clock/advance", body=body))
 
 
+class DepositProducts(_Resource):
+    def list(self, bank_id: str) -> List[t.DepositProduct]:
+        return cast(List[t.DepositProduct], self._t.request("GET", f"/v1/banks/{_q(bank_id)}/deposit-products")["data"])
+
+    def get(self, bank_id: str, product_id: str) -> t.DepositProduct:
+        return cast(t.DepositProduct, self._t.request("GET", f"/v1/banks/{_q(bank_id)}/deposit-products/{_q(product_id)}"))
+
+    def create(self, bank_id: str, *, code: str, name: str, kind: str, **settings: Any) -> t.DepositProduct:
+        """Adds a savings product (``rate_tiers=[{"from_minor": 0, "rate_bps": 300}]``) or a fixed-deposit
+        product (``terms=[{"days": 90, "rate_bps": 800}]``). Other settings: tier_method, day_count,
+        accrual_basis, payout_frequency, withholding_tax_bps, min_opening_minor, min_balance_minor,
+        max_balance_minor, withdrawals_per_month, excess_withdrawal_action, early_forfeit_bps,
+        early_penalty_fixed_minor, early_penalty_bps, default_maturity_instruction, status. Needs bank:write."""
+        body = _body(code=code, name=name, kind=kind, **settings)
+        return cast(t.DepositProduct, self._t.request("POST", f"/v1/banks/{_q(bank_id)}/deposit-products", body=body))
+
+    def update(self, bank_id: str, product_id: str, **settings: Any) -> t.DepositProduct:
+        """Changes a product (bumps its version); code and kind can't change. ``clear`` resets
+        max_balance_minor or withdrawals_per_month to none."""
+        return cast(t.DepositProduct, self._t.request("PATCH", f"/v1/banks/{_q(bank_id)}/deposit-products/{_q(product_id)}",
+                                                      body=_body(**settings)))
+
+    def quote(self, *, product_id: str, amount_minor: int, days: Optional[int] = None,
+              term_days: Optional[int] = None) -> t.DepositQuote:
+        """Projects the interest an amount would earn over ``days`` (savings) or a ``term_days`` term."""
+        _amount(amount_minor)
+        body = _body(product_id=product_id, amount_minor=amount_minor, days=days, term_days=term_days)
+        return cast(t.DepositQuote, self._t.request("POST", "/v1/deposit-products/quote", body=body))
+
+
+class FixedDeposits(_Resource):
+    def open(self, *, source_account_id: str, product_id: str, term_days: int, amount_minor: int,
+             maturity_instruction: Optional[str] = None, payout_account_id: Optional[str] = None,
+             idempotency_key: Optional[str] = None) -> Dict[str, Any]:
+        """Books a fixed deposit at the term's current rate. ``maturity_instruction``: payout,
+        rollover_principal or rollover_all. Needs deposits:write."""
+        _amount(amount_minor)
+        body = _body(source_account_id=source_account_id, product_id=product_id, term_days=term_days, amount_minor=amount_minor,
+                     maturity_instruction=maturity_instruction, payout_account_id=payout_account_id)
+        return cast(Dict[str, Any], self._t.request("POST", "/v1/fixed-deposits", body=body, idempotent=True, idempotency_key=idempotency_key))
+
+    def list(self, *, player_id: Optional[str] = None, source_account_id: Optional[str] = None,
+             status: Optional[str] = None, limit: Optional[int] = None) -> List[t.FixedDeposit]:
+        q = {"player_id": player_id, "source_account_id": source_account_id, "status": status, "limit": limit}
+        return cast(List[t.FixedDeposit], self._t.request("GET", "/v1/fixed-deposits", query=q)["data"])
+
+    def get(self, deposit_id: str) -> t.FixedDeposit:
+        return cast(t.FixedDeposit, self._t.request("GET", f"/v1/fixed-deposits/{_q(deposit_id)}"))
+
+    def update(self, deposit_id: str, *, maturity_instruction: str) -> t.FixedDeposit:
+        """Changes what happens at maturity."""
+        return cast(t.FixedDeposit, self._t.request("PATCH", f"/v1/fixed-deposits/{_q(deposit_id)}",
+                                                    body={"maturity_instruction": maturity_instruction}))
+
+    def break_quote(self, deposit_id: str) -> t.BreakQuote:
+        """What breaking the deposit early pays now."""
+        return cast(t.BreakQuote, self._t.request("GET", f"/v1/fixed-deposits/{_q(deposit_id)}/break-quote"))
+
+    def break_(self, deposit_id: str, *, max_penalty_minor: Optional[int] = None,
+               idempotency_key: Optional[str] = None) -> Dict[str, Any]:
+        """Breaks the deposit early. Pass the quote's ``penalty_minor`` as ``max_penalty_minor``
+        (PenaltyChangedError if it rose). Named ``break_`` because ``break`` is a keyword."""
+        return cast(Dict[str, Any], self._t.request("POST", f"/v1/fixed-deposits/{_q(deposit_id)}/break",
+                                                    body=_body(max_penalty_minor=max_penalty_minor),
+                                                    idempotent=True, idempotency_key=idempotency_key))
+
+
+class Merchants(_Resource):
+    def create(self, *, external_merchant_id: str, name: str, category: Optional[str] = None,
+               owner_player_id: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None) -> t.Merchant:
+        """Registers a merchant (an NPC shop or a player-run store). Repeat calls with the same
+        ``external_merchant_id`` return it. Needs merchants:write."""
+        body = _body(external_merchant_id=external_merchant_id, name=name, category=category,
+                     owner_player_id=owner_player_id, metadata=metadata)
+        return cast(t.Merchant, self._t.request("POST", "/v1/merchants", body=body, retry_safe=True))
+
+    def list(self, *, status: Optional[str] = None, owner_player_id: Optional[str] = None,
+             external_merchant_id: Optional[str] = None, limit: Optional[int] = None) -> List[t.Merchant]:
+        q = {"status": status, "owner_player_id": owner_player_id, "external_merchant_id": external_merchant_id, "limit": limit}
+        return cast(List[t.Merchant], self._t.request("GET", "/v1/merchants", query=q)["data"])
+
+    def get(self, merchant_id: str) -> t.Merchant:
+        return cast(t.Merchant, self._t.request("GET", f"/v1/merchants/{_q(merchant_id)}"))
+
+    def update(self, merchant_id: str, *, name: Optional[str] = None, category: Optional[str] = None,
+               status: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None) -> t.Merchant:
+        """Renames, recategorises, suspends (card payments are then declined) or reactivates a merchant."""
+        body = _body(name=name, category=category, status=status, metadata=metadata)
+        return cast(t.Merchant, self._t.request("PATCH", f"/v1/merchants/{_q(merchant_id)}", body=body))
+
+
+class CardPrograms(_Resource):
+    def list(self, bank_id: str) -> List[t.CardProgram]:
+        return cast(List[t.CardProgram], self._t.request("GET", f"/v1/banks/{_q(bank_id)}/card-programs")["data"])
+
+    def get(self, bank_id: str, program_id: str) -> t.CardProgram:
+        return cast(t.CardProgram, self._t.request("GET", f"/v1/banks/{_q(bank_id)}/card-programs/{_q(program_id)}"))
+
+    def create(self, bank_id: str, *, name: str, bin: Optional[str] = None, validity_months: Optional[int] = None,
+               auth_expiry_seconds: Optional[int] = None, per_txn_limit_minor: Optional[int] = None,
+               daily_limit_minor: Optional[int] = None, status: Optional[str] = None) -> t.CardProgram:
+        """Adds a card program. Turn on the bank's ``cards`` feature flag to issue cards. Needs bank:write."""
+        body = _body(name=name, bin=bin, validity_months=validity_months, auth_expiry_seconds=auth_expiry_seconds,
+                     per_txn_limit_minor=per_txn_limit_minor, daily_limit_minor=daily_limit_minor, status=status)
+        return cast(t.CardProgram, self._t.request("POST", f"/v1/banks/{_q(bank_id)}/card-programs", body=body))
+
+    def update(self, bank_id: str, program_id: str, *, name: Optional[str] = None, validity_months: Optional[int] = None,
+               auth_expiry_seconds: Optional[int] = None, per_txn_limit_minor: Optional[int] = None,
+               daily_limit_minor: Optional[int] = None, status: Optional[str] = None,
+               clear: Optional[List[str]] = None) -> t.CardProgram:
+        body = _body(name=name, validity_months=validity_months, auth_expiry_seconds=auth_expiry_seconds,
+                     per_txn_limit_minor=per_txn_limit_minor, daily_limit_minor=daily_limit_minor, status=status, clear=clear)
+        return cast(t.CardProgram, self._t.request("PATCH", f"/v1/banks/{_q(bank_id)}/card-programs/{_q(program_id)}", body=body))
+
+
+class Cards(_Resource):
+    def issue(self, *, account_id: str, program_id: Optional[str] = None, name_on_card: Optional[str] = None,
+              per_txn_limit_minor: Optional[int] = None, daily_limit_minor: Optional[int] = None,
+              max_fee_minor: Optional[int] = None, metadata: Optional[Dict[str, Any]] = None,
+              idempotency_key: Optional[str] = None) -> t.IssueCardResult:
+        """Issues a debit card on a player account, charging any card_issuance fee. The result's
+        ``card_number`` and ``cvv`` are shown only now. Needs cards:write."""
+        body = _body(account_id=account_id, program_id=program_id, name_on_card=name_on_card,
+                     per_txn_limit_minor=per_txn_limit_minor, daily_limit_minor=daily_limit_minor,
+                     max_fee_minor=max_fee_minor, metadata=metadata)
+        return cast(t.IssueCardResult, self._t.request("POST", "/v1/cards", body=body, idempotent=True, idempotency_key=idempotency_key))
+
+    def list(self, *, account_id: Optional[str] = None, player_id: Optional[str] = None,
+             status: Optional[str] = None, limit: Optional[int] = None) -> List[t.Card]:
+        q = {"account_id": account_id, "player_id": player_id, "status": status, "limit": limit}
+        return cast(List[t.Card], self._t.request("GET", "/v1/cards", query=q)["data"])
+
+    def get(self, card_id: str) -> t.Card:
+        return cast(t.Card, self._t.request("GET", f"/v1/cards/{_q(card_id)}"))
+
+    def update(self, card_id: str, *, name_on_card: Optional[str] = None, per_txn_limit_minor: Optional[int] = None,
+               daily_limit_minor: Optional[int] = None, clear: Optional[List[str]] = None,
+               metadata: Optional[Dict[str, Any]] = None) -> t.Card:
+        """Changes the name on the card or its own limits (``clear`` goes back to the program's)."""
+        body = _body(name_on_card=name_on_card, per_txn_limit_minor=per_txn_limit_minor,
+                     daily_limit_minor=daily_limit_minor, clear=clear, metadata=metadata)
+        return cast(t.Card, self._t.request("PATCH", f"/v1/cards/{_q(card_id)}", body=body))
+
+    def block(self, card_id: str, *, reason: Optional[str] = None) -> t.Card:
+        """Pauses the card: new payments are declined (card_blocked)."""
+        return cast(t.Card, self._t.request("POST", f"/v1/cards/{_q(card_id)}/block", body=_body(reason=reason)))
+
+    def unblock(self, card_id: str) -> t.Card:
+        return cast(t.Card, self._t.request("POST", f"/v1/cards/{_q(card_id)}/unblock", body={}))
+
+    def report_lost(self, card_id: str, *, reason: str = "lost") -> t.Card:
+        """Reports the card ``lost`` or ``stolen``: final, and no replacement is issued.
+        Payments approved before the report still capture."""
+        return cast(t.Card, self._t.request("POST", f"/v1/cards/{_q(card_id)}/report-lost", body={"reason": reason}))
+
+    def close(self, card_id: str, *, reason: Optional[str] = None) -> t.Card:
+        return cast(t.Card, self._t.request("POST", f"/v1/cards/{_q(card_id)}/close", body=_body(reason=reason)))
+
+
+class CardAuthorizations(_Resource):
+    def authorize(self, *, amount_minor: int, card_id: Optional[str] = None, card_number: Optional[str] = None,
+                  expiry_month: Optional[int] = None, expiry_year: Optional[int] = None, cvv: Optional[str] = None,
+                  merchant_account_id: Optional[str] = None, merchant_account_number: Optional[str] = None,
+                  reference: Optional[str] = None, description: Optional[str] = None,
+                  max_fee_minor: Optional[int] = None, capture: Optional[bool] = None,
+                  idempotency_key: Optional[str] = None) -> t.AuthorizeCardResult:
+        """Pays a merchant by card. An approved payment is captured at once; ``capture=False``
+        only reserves the money for a later ``capture`` or ``release``. A decline is not an
+        exception: check ``result["authorization"]["status"]`` and ``decline_code``. Needs cards:charge."""
+        _amount(amount_minor)
+        body = _body(card_id=card_id, card_number=card_number, expiry_month=expiry_month, expiry_year=expiry_year, cvv=cvv,
+                     merchant_account_id=merchant_account_id, merchant_account_number=merchant_account_number,
+                     amount_minor=amount_minor, reference=reference, description=description, max_fee_minor=max_fee_minor,
+                     capture=capture)
+        return cast(t.AuthorizeCardResult, self._t.request("POST", "/v1/card-authorizations", body=body, idempotent=True,
+                                                           idempotency_key=idempotency_key))
+
+    def list(self, *, card_id: Optional[str] = None, merchant_id: Optional[str] = None, account_id: Optional[str] = None,
+             status: Optional[str] = None, limit: Optional[int] = None) -> List[t.CardAuthorization]:
+        q = {"card_id": card_id, "merchant_id": merchant_id, "account_id": account_id, "status": status, "limit": limit}
+        return cast(List[t.CardAuthorization], self._t.request("GET", "/v1/card-authorizations", query=q)["data"])
+
+    def get(self, authorization_id: str) -> t.CardAuthorization:
+        return cast(t.CardAuthorization, self._t.request("GET", f"/v1/card-authorizations/{_q(authorization_id)}"))
+
+    def capture(self, authorization_id: str, *, amount_minor: Optional[int] = None, max_fee_minor: Optional[int] = None,
+                idempotency_key: Optional[str] = None) -> t.CaptureCardResult:
+        """Settles all or part of an approved payment into the merchant account; the rest is released."""
+        if amount_minor is not None:
+            _amount(amount_minor)
+        return cast(t.CaptureCardResult, self._t.request("POST", f"/v1/card-authorizations/{_q(authorization_id)}/capture",
+                                                         body=_body(amount_minor=amount_minor, max_fee_minor=max_fee_minor),
+                                                         idempotent=True, idempotency_key=idempotency_key))
+
+    def release(self, authorization_id: str, *, reason: Optional[str] = None,
+                idempotency_key: Optional[str] = None) -> Dict[str, Any]:
+        """Cancels an approved payment and frees its funds."""
+        return cast(Dict[str, Any], self._t.request("POST", f"/v1/card-authorizations/{_q(authorization_id)}/release",
+                                                    body=_body(reason=reason), idempotent=True, idempotency_key=idempotency_key))
+
+    def refund(self, authorization_id: str, *, amount_minor: Optional[int] = None, reason: Optional[str] = None,
+               idempotency_key: Optional[str] = None) -> t.RefundCardResult:
+        """Refunds all (omit amount_minor) or part of a captured payment from the merchant account. Fees are not refunded."""
+        if amount_minor is not None:
+            _amount(amount_minor)
+        return cast(t.RefundCardResult, self._t.request("POST", f"/v1/card-authorizations/{_q(authorization_id)}/refunds",
+                                                        body=_body(amount_minor=amount_minor, reason=reason),
+                                                        idempotent=True, idempotency_key=idempotency_key))
+
+
+class WebhookEndpoints(_Resource):
+    def create(self, *, url: str, description: Optional[str] = None,
+               event_types: Optional[List[str]] = None) -> t.WebhookEndpoint:
+        """Registers an endpoint. The result's ``secret`` is shown only now: store it and pass it to
+        :func:`verify_webhook`. ``event_types`` defaults to ``["*"]``. Needs webhooks:write."""
+        body = _body(url=url, description=description, event_types=event_types)
+        return cast(t.WebhookEndpoint, self._t.request("POST", "/v1/webhooks/endpoints", body=body))
+
+    def list(self) -> List[t.WebhookEndpoint]:
+        return cast(List[t.WebhookEndpoint], self._t.request("GET", "/v1/webhooks/endpoints")["data"])
+
+    def get(self, endpoint_id: str) -> t.WebhookEndpoint:
+        return cast(t.WebhookEndpoint, self._t.request("GET", f"/v1/webhooks/endpoints/{_q(endpoint_id)}"))
+
+    def update(self, endpoint_id: str, *, url: Optional[str] = None, description: Optional[str] = None,
+               event_types: Optional[List[str]] = None, status: Optional[str] = None) -> t.WebhookEndpoint:
+        """Changes the URL, description or event types, or pauses (``status="disabled"``) and re-enables it."""
+        body = _body(url=url, description=description, event_types=event_types, status=status)
+        return cast(t.WebhookEndpoint, self._t.request("PATCH", f"/v1/webhooks/endpoints/{_q(endpoint_id)}", body=body))
+
+    def delete(self, endpoint_id: str) -> None:
+        self._t.request("DELETE", f"/v1/webhooks/endpoints/{_q(endpoint_id)}")
+
+    def rotate_secret(self, endpoint_id: str) -> t.WebhookEndpoint:
+        """Issues a new secret (in the result). The old one keeps signing for 24 hours."""
+        return cast(t.WebhookEndpoint, self._t.request("POST", f"/v1/webhooks/endpoints/{_q(endpoint_id)}/rotate-secret"))
+
+    def test(self, endpoint_id: str) -> t.WebhookDelivery:
+        """Sends a webhook.test event now and returns how that attempt went."""
+        return cast(t.WebhookDelivery, self._t.request("POST", f"/v1/webhooks/endpoints/{_q(endpoint_id)}/test"))
+
+
+class WebhookEvents(_Resource):
+    def list(self, *, type: Optional[str] = None, account_id: Optional[str] = None, limit: Optional[int] = None,
+             cursor: Optional[str] = None) -> t.WebhookEventPage:
+        """One page of the event log, newest first (kept 30 days). Also a polling feed."""
+        q = {"type": type, "account_id": account_id, "limit": limit, "cursor": cursor}
+        return cast(t.WebhookEventPage, self._t.request("GET", "/v1/webhooks/events", query=q))
+
+    def iter(self, *, type: Optional[str] = None, account_id: Optional[str] = None,
+             limit: Optional[int] = None) -> Iterator[t.WebhookEvent]:
+        """Every event matching the filter, newest first, fetching pages as needed."""
+        cursor: Optional[str] = None
+        while True:
+            page = self.list(type=type, account_id=account_id, limit=limit, cursor=cursor)
+            yield from page["data"]
+            cursor = page.get("next_cursor")
+            if not cursor:
+                return
+
+    def get(self, event_id: str) -> t.WebhookEvent:
+        return cast(t.WebhookEvent, self._t.request("GET", f"/v1/webhooks/events/{_q(event_id)}"))
+
+    def deliveries(self, event_id: str) -> List[t.WebhookDelivery]:
+        """The event's deliveries, one per endpoint, with attempts and the last error."""
+        return cast(List[t.WebhookDelivery], self._t.request("GET", f"/v1/webhooks/events/{_q(event_id)}/deliveries")["data"])
+
+    def redeliver(self, event_id: str, *, endpoint_id: Optional[str] = None) -> List[t.WebhookDelivery]:
+        """Sends the event again, to one endpoint or every subscribed one. Retries start over."""
+        return cast(List[t.WebhookDelivery], self._t.request("POST", f"/v1/webhooks/events/{_q(event_id)}/redeliver",
+                                                             body=_body(endpoint_id=endpoint_id))["data"])
+
+
+class Webhooks:
+    """Signed event notifications (debit and credit alerts). Verify deliveries with ``verify_webhook``."""
+
+    def __init__(self, transport: Transport) -> None:
+        self.endpoints = WebhookEndpoints(transport)
+        self.events = WebhookEvents(transport)
+
+
 class GameBank:
     """Runtime client for game servers, authenticated with a game API key.
 
@@ -302,6 +591,13 @@ class GameBank:
         self.fees = Fees(self._t)
         self.currencies = Currencies(self._t)
         self.clock = GameClock(self._t)
+        self.webhooks = Webhooks(self._t)
+        self.merchants = Merchants(self._t)
+        self.card_programs = CardPrograms(self._t)
+        self.cards = Cards(self._t)
+        self.card_authorizations = CardAuthorizations(self._t)
+        self.deposit_products = DepositProducts(self._t)
+        self.fixed_deposits = FixedDeposits(self._t)
 
     def name_enquiry(self, bank_code: str, account_number: str) -> t.NameEnquiry:
         """Confirms a recipient before a transfer: returns only the account name and status."""

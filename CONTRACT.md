@@ -8,6 +8,7 @@ The behaviour every Game Banking Engine SDK implements. The canonical copy lives
 | Python | [game-banking-sdk-python](https://github.com/ShowBaba/game-banking-sdk-python) | `gamebanking` |
 | C# / .NET | [game-banking-sdk-dotnet](https://github.com/ShowBaba/game-banking-sdk-dotnet) | `GameBanking` |
 | Go | [game-banking-sdk-go](https://github.com/ShowBaba/game-banking-sdk-go) | `github.com/ShowBaba/game-banking-sdk-go` |
+| Rust | [game-banking-sdk-rust](https://github.com/ShowBaba/game-banking-sdk-rust) | `gamebanking` (crate) |
 
 **The SDKs are for game servers.** A game API key can move money, so it must never ship in a game client or a web page. The SDKs never authenticate players: your server verifies its own player, then calls the engine for them.
 
@@ -41,7 +42,7 @@ Up to `maxRetries` extra attempts, with exponential backoff (0.5 s, 1 s, 2 s …
 | Any other `4xx` | Never. |
 
 ### Errors
-Every failure raises (or returns, in Go) a `GameBankError` with `status`, `code` (the engine's stable error code), `message`, `details`, `requestId` (the engine's correlation ID) and `retryAfter`. Subtypes let you catch categories:
+Every failure raises (or returns, in Go and Rust) a `GameBankError` with `status`, `code` (the engine's stable error code), `message`, `details`, `requestId` (the engine's correlation ID) and `retryAfter`. Subtypes let you catch categories:
 
 | Type | When |
 | --- | --- |
@@ -72,6 +73,41 @@ A bank's fee rules (`fees.list/get/create/update`, needing `bank:write` to chang
 3. Results carry `fees`, `fees_total_minor` and `total_debit_minor`; ledger entries and history lines carry `kind` (`principal`, `fee` or `levy`), and a fee line's narration is the fee's name.
 
 Fee rules report a `state` (`in_effect`, `scheduled`, `ended`, `inactive`) computed from the game clock; `start_now` starts a rule at the current game time. Holds carry `reserved_fee_minor`. `banks.books(bank_id)` returns the bank's fee income and levies held. A reversal undoes the whole transaction and refunds its fees unless the bank turned that off.
+
+### Webhooks
+
+Every SDK ships a verification helper that receivers call with the **raw** body,
+the `GBE-Signature` header and the endpoint secret, plus an optional tolerance
+(default 5 minutes). It parses `t` and every `v1` value, and rejects a timestamp
+outside the tolerance. It computes HMAC-SHA256(secret, "<t>.<body>") in hex and
+accepts if any `v1` matches, compared in constant time. On success it returns
+the parsed event; on failure it raises `WebhookVerificationError`. The engine's
+test vector is: secret `whsec_test`, t `1700000000`, body `{"hello":"world"}`,
+giving `f592bbf3951cfc94e560eecfb5d9dd4da6b0fff2e626235f8ab4b54860925d0b`.
+
+The client also has a `webhooks` resource, with these operations:
+- endpoints: `create`, `list`, `get`, `update`, `delete`, `rotateSecret` and `test`;
+- events: `list` (an auto-paging iterator, filterable by `type` and `account_id`), `get`, `deliveries` and `redeliver`.
+
+### Merchants and cards
+
+The runtime client has these resources:
+- `merchants`: `create` (idempotent on `external_merchant_id`; returns the existing merchant on a repeat), `list`, `get` and `update`. Merchant accounts are opened with `accounts.open` and a `merchant_id`.
+- `cardPrograms` (under a bank): `list`, `get`, `create` and `update`.
+- `cards`: `issue` (an idempotent money call, because it may charge a fee; the result carries `card_number` and `cvv` once), `list`, `get`, `update`, `block`, `unblock`, `reportLost` (`lost` or `stolen`) and `close`.
+- `cardAuthorizations`: `authorize`, `list`, `get`, `capture`, `release` and `refund`. Authorize, capture, release and refund are idempotent money calls and carry an idempotency key. `authorize` captures an approved payment in the same call by default, and its result then also carries `transaction`, `merchant_balance` and `total_debit_minor`; `capture: false` only reserves the money for a later `capture` or `release`.
+
+A declined authorisation is a successful response with `authorization.status == "declined"` and a `decline_code`, not an exception. SDKs export the decline codes as constants.
+
+### Savings and fixed deposits
+
+The runtime client has these resources:
+- `depositProducts` (under a bank): `list`, `get`, `create`, `update` and `quote`.
+- `accounts.open`, which takes `product_id` (and optionally `interest_account_id`) to open a savings account.
+- `accounts.interest`: the rate, accrued interest, next payout day and recent payouts.
+- `fixedDeposits`:
+  - `open` and `break`, which are idempotent money calls;
+  - `list`, `get`, `update` (the maturity instruction) and `breakQuote`.
 
 ### Pagination
 Account history is cursor-paginated. Each SDK offers a one-page call (`accounts.transactions`) and an iterator that follows `next_cursor` (`accounts.iterateTransactions`).

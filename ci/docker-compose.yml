@@ -29,5 +29,9 @@ services:
       GBE_REGISTRATION_ENABLED: "true"
       GBE_AUTH_RATE_LIMIT_RPS: "0"
       GBE_SCHEDULER_INTERVAL: "1s"
+      # The contract tests run a webhook receiver on the host and register http://host.docker.internal:PORT.
+      GBE_WEBHOOK_ALLOW_PRIVATE: "true"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${GBE_ENGINE_PORT:-8080}:8080"

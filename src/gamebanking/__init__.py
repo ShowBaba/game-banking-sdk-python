@@ -15,12 +15,14 @@ from .errors import (
     InvalidRequestError,
     LimitExceededError,
     NotFoundError,
+    PenaltyChangedError,
     PermissionDeniedError,
     RateLimitError,
     ServerError,
     UnprocessableError,
 )
 from .money import format_minor, to_minor
+from .webhooks import SIGNATURE_HEADER, WebhookVerificationError, verify_webhook
 
 __version__ = VERSION
 
@@ -41,9 +43,13 @@ __all__ = [
     "InvalidRequestError",
     "LimitExceededError",
     "NotFoundError",
+    "PenaltyChangedError",
     "PermissionDeniedError",
     "RateLimitError",
     "ServerError",
     "UnprocessableError",
+    "verify_webhook",
+    "WebhookVerificationError",
+    "SIGNATURE_HEADER",
     "__version__",
 ]
