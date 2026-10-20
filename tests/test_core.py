@@ -5,10 +5,12 @@ from typing import Any, Dict, List, Optional, Union
 from unittest import mock
 
 from gamebanking import (
+    DEFAULT_BASE_URL,
     APIConnectionError,
     ConflictError,
     FeeChangedError,
     GameBank,
+    GameBankManagement,
     PenaltyChangedError,
     GameBankError,
     InsufficientFundsError,
@@ -64,16 +66,17 @@ class ConfigurationTest(unittest.TestCase):
         self.assertEqual(s.calls[0]["headers"]["Authorization"], "Bearer gbe_test_sk_abc")
         self.assertEqual(GameBank(api_key="gbe_live_sk_x", base_url="http://e").environment, "production")
 
-    def test_requires_key_and_url_with_env_fallback(self) -> None:
+    def test_requires_key_and_defaults_the_url(self) -> None:
         with mock.patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(GameBankError) as c:
                 GameBank(base_url="http://e")
             self.assertEqual(c.exception.code, "missing_api_key")
-            with self.assertRaises(GameBankError) as c:
-                GameBank(api_key="gbe_test_sk_x")
-            self.assertEqual(c.exception.code, "missing_base_url")
+            self.assertEqual(GameBank(api_key="gbe_test_sk_x").base_url, "https://api.gamebank.dev")
+            self.assertEqual(GameBankManagement(api_key="gbe_dev_x").base_url, DEFAULT_BASE_URL)
         with mock.patch.dict(os.environ, {"GBE_API_KEY": "gbe_live_sk_env", "GBE_BASE_URL": "http://env"}, clear=True):
             self.assertEqual(GameBank().environment, "production")
+            self.assertEqual(GameBank().base_url, "http://env")
+            self.assertEqual(GameBank(base_url="http://explicit/").base_url, "http://explicit")
 
 
 class RetryTest(unittest.TestCase):

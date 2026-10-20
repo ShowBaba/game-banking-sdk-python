@@ -17,6 +17,9 @@ from typing import Any, Callable, Dict, Mapping, NamedTuple, Optional
 from .errors import GameBankError, error_for
 
 VERSION = "0.5.3"
+
+#: The hosted engine. Override it with ``base_url`` or GBE_BASE_URL for a local or self-hosted engine.
+DEFAULT_BASE_URL = "https://api.gamebank.dev"
 _RETRY_STATUSES = {500, 502, 503, 504}
 
 
@@ -87,9 +90,7 @@ class Transport:
         api_key = api_key or os.environ.get("GBE_API_KEY")
         if not api_key:
             raise GameBankError("Pass api_key or set GBE_API_KEY.", code="missing_api_key")
-        base_url = base_url or os.environ.get("GBE_BASE_URL")
-        if not base_url:
-            raise GameBankError("Pass base_url (your engine's address) or set GBE_BASE_URL.", code="missing_base_url")
+        base_url = base_url or os.environ.get("GBE_BASE_URL") or DEFAULT_BASE_URL
         self.api_key = api_key.strip()
         self.base_url = base_url.rstrip("/")
         self.environment = environment_of(self.api_key)

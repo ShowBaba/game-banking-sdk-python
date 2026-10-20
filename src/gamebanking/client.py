@@ -562,7 +562,7 @@ class Webhooks:
 class GameBank:
     """Runtime client for game servers, authenticated with a game API key.
 
-    >>> gb = GameBank(api_key=os.environ["GBE_API_KEY"], base_url="https://engine.example.com")
+    >>> gb = GameBank(api_key=os.environ["GBE_API_KEY"])  # talks to https://api.gamebank.dev
     >>> gb.transfers.create(source_account_id=a, destination_account_number=n, amount_minor=1000)
     """
 
@@ -581,6 +581,8 @@ class GameBank:
                                           on_response=on_response, sender=sender)
         #: "sandbox" or "production", read from the API key's prefix.
         self.environment = self._t.environment
+        #: The engine this client talks to.
+        self.base_url = self._t.base_url
         self.players = Players(self._t)
         self.accounts = Accounts(self._t)
         self.funding = Funding(self._t)
@@ -670,6 +672,8 @@ class GameBankManagement:
     ) -> None:
         self._t = Transport(api_key, base_url, timeout=timeout, max_retries=max_retries,
                             on_response=on_response, sender=sender)
+        #: The engine this client talks to.
+        self.base_url = self._t.base_url
         self.games = Games(self._t)
         self.api_keys = ApiKeys(self._t)
         self.credentials = DeveloperCredentials(self._t)

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **No base URL needed.** Clients talk to the hosted engine at `https://api.gamebank.dev` by default (`gamebanking.DEFAULT_BASE_URL`). `base_url` and `GBE_BASE_URL` still override it, for a local or self-hosted engine. The `missing_base_url` error is gone. Clients expose `base_url`.
 - **Card payments charge at once by default.** `card_authorizations.authorize` now captures an approved payment in the same call (the engine's new default); the result then also carries `transaction`, `merchant_balance` and `total_debit_minor`. Pass `capture=False` to hold the payment for a later `capture` or `release` as before.
 
 ## 0.5.3

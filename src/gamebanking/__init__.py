@@ -3,7 +3,7 @@
 Keep game API keys on your servers: never ship them in a game client.
 """
 
-from ._transport import VERSION, RawResponse, ResponseInfo, environment_of
+from ._transport import DEFAULT_BASE_URL, VERSION, RawResponse, ResponseInfo, environment_of
 from .client import GameBank, GameBankManagement
 from .errors import (
     APIConnectionError,
@@ -27,6 +27,7 @@ from .webhooks import SIGNATURE_HEADER, WebhookVerificationError, verify_webhook
 __version__ = VERSION
 
 __all__ = [
+    "DEFAULT_BASE_URL",
     "GameBank",
     "GameBankManagement",
     "ResponseInfo",

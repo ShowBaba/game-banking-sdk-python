@@ -3,11 +3,15 @@
 Python distribution for the Game Banking Engine. Python 3.9+, standard library only.
 
 > Game API keys move money. Use this SDK on your game servers only.
+>
+> In-game money only: the Game Banking Engine simulates banking for game currencies. It holds no real money and isn't a regulated financial service, so don't use it for balances players can cash out or exchange for real money.
 
 ## Install
 
+From [PyPI](https://pypi.org/project/game-banking-sdk/). The package is `game-banking-sdk`; the module you import is `gamebanking`.
+
 ```bash
-pip install game-banking-sdk==0.5.3
+pip install game-banking-sdk
 ```
 
 ## Quick start
@@ -16,7 +20,7 @@ pip install game-banking-sdk==0.5.3
 import os
 from gamebanking import GameBank, InsufficientFundsError  # module inside game-banking-sdk
 
-gb = GameBank(os.environ["GBE_API_KEY"], "https://your-engine.example.com")
+gb = GameBank(os.environ["GBE_API_KEY"])  # talks to https://api.gamebank.dev
 
 player = gb.players.upsert(external_player_id="user-42", display_name="Ada Obi")
 account = gb.accounts.open(bank_id=BANK_ID, player_id=player["id"])
@@ -134,7 +138,7 @@ def gbe_webhook():
 ```python
 from gamebanking import GameBankManagement
 
-mgmt = GameBankManagement(os.environ["GBE_DEV_CREDENTIAL"], base_url)
+mgmt = GameBankManagement(os.environ["GBE_DEV_CREDENTIAL"])
 game = mgmt.games.create(name="Lagos Hustle")
 key = mgmt.api_keys.issue(game["id"], environment="sandbox", scopes=["account:read", "account:write", "transfer:create"])
 print(key["secret"])  # shown once
@@ -145,7 +149,7 @@ mgmt.game(game["id"], "sandbox").banks.create(name="Eko Trust Bank", base_curren
 
 ## Behaviour
 
-Retries, idempotency keys, error types and money helpers follow the shared contract in [`CONTRACT.md`](CONTRACT.md). The network error class is `APIConnectionError`, so it doesn't shadow Python's built-in `ConnectionError`. Client options: `timeout` (seconds), `max_retries`, `on_response`, `sender` (a custom HTTP function). `to_minor("100.50", 2)` and `format_minor(10050, 2)` convert amounts; floats are refused.
+Retries, idempotency keys, error types and money helpers follow the shared contract in [`CONTRACT.md`](CONTRACT.md). The network error class is `APIConnectionError`, so it doesn't shadow Python's built-in `ConnectionError`. Client options: `api_key` (default `GBE_API_KEY`), `base_url` (default `GBE_BASE_URL`, then the hosted engine `https://api.gamebank.dev`; set it only for a local or self-hosted engine, e.g. `http://localhost:8080`), `timeout` (seconds), `max_retries`, `on_response`, `sender` (a custom HTTP function). `to_minor("100.50", 2)` and `format_minor(10050, 2)` convert amounts; floats are refused.
 
 The client is synchronous. Call it from a thread pool (`asyncio.to_thread`) in async servers.
 
